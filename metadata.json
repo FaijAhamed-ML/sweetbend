@@ -1,0 +1,14 @@
+{
+  "name": "Sweet Bend Shop",
+  "description": "A premium sweet shop website featuring an elegant white theme, product catalog with kilo-based pricing, a real-time POS dashboard for sales and inventory tracking, and a dedicated admin portal.",
+  "requestFramePermissions": [
+    "camera"
+  ],
+  "majorCapabilities": [
+    "authentication",
+    "real-time-notifications",
+    "admin-dashboard",
+    "pos-system",
+    "inventory-management"
+  ]
+}
