@@ -35,6 +35,7 @@ export default function Signup() {
       
       navigate('/');
     } catch (err: any) {
+      console.error('Signup Error:', err);
       setError(getAuthErrorMessage(err.code || err.message));
     } finally {
       setLoading(false);
@@ -64,6 +65,7 @@ export default function Signup() {
       
       navigate('/');
     } catch (err: any) {
+      console.error('Google Signup Error:', err);
       setError(getAuthErrorMessage(err.code || err.message));
     } finally {
       setLoading(false);

@@ -84,7 +84,7 @@ function Navbar() {
     <nav className="fixed w-full z-50 bg-white/90 backdrop-blur-md border-b border-bento-border h-16 flex items-center shrink-0">
       <div className="max-w-[1400px] w-full mx-auto px-6 flex justify-between items-center">
         <Link to="/" className="flex items-center gap-4">
-          <div className="w-10 h-10 bg-bento-accent rounded-lg flex items-center justify-center font-bold text-white shadow-sm ring-1 ring-black/5 overflow-hidden">
+          <div className="w-10 h-10 bg-white rounded-lg flex items-center justify-center font-bold text-bento-accent-dark shadow-sm ring-1 ring-black/5 overflow-hidden">
             {settings?.logoUrl ? (
               <img src={settings.logoUrl} alt="Logo" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
             ) : (
@@ -102,7 +102,7 @@ function Navbar() {
           <div className="flex gap-6 h-full items-center text-sm font-medium text-bento-text">
             {navLinks.map((link) => (
               <Link 
-                key={link.path} 
+                key={`desktop-nav-${link.path}`} 
                 to={link.path} 
                 className={`transition-all h-full flex items-center relative ${location.pathname === link.path ? 'text-bento-accent font-black' : 'hover:text-black'}`}
               >
@@ -163,7 +163,7 @@ function Navbar() {
             <div className="px-6 py-8 space-y-4">
               {navLinks.map((link) => (
                 <Link
-                  key={link.path}
+                  key={`mobile-nav-${link.path}`}
                   to={link.path}
                   onClick={() => setIsOpen(false)}
                   className="block text-lg font-bold text-bento-text hover:text-bento-accent"
@@ -213,6 +213,8 @@ function PrivateRoute({ children, role }: { children: any, role?: 'admin' | 'pos
 }
 
 export default function App() {
+  const [currentPath, setCurrentPath] = useState(window.location.pathname);
+
   useEffect(() => {
     seedData();
   }, []);
@@ -222,7 +224,7 @@ export default function App() {
       <AuthProvider>
         <Router>
           <div className="min-h-screen bg-bento-bg text-bento-text font-sans flex flex-col">
-            <Navbar />
+            <AppContent onPathChange={setCurrentPath} />
             <main className="flex-1 pt-16 flex flex-col overflow-hidden">
               <Routes>
                 <Route path="/" element={<CustomerHome />} />
@@ -230,38 +232,49 @@ export default function App() {
                 <Route path="/signup" element={<Signup />} />
                 <Route path="/profile" element={<Profile />} />
                 <Route 
-                  path="/admin" 
-                  element={
-                    <PrivateRoute role="admin">
-                      <AdminDashboard />
-                    </PrivateRoute>
-                  } 
+                   path="/admin" 
+                   element={
+                     <PrivateRoute role="admin">
+                       <AdminDashboard />
+                     </PrivateRoute>
+                   } 
                 />
                 <Route 
-                  path="/pos" 
-                  element={
-                    <PrivateRoute role="pos">
-                      <POSDashboard />
-                    </PrivateRoute>
-                  } 
+                   path="/pos" 
+                   element={
+                     <PrivateRoute role="pos">
+                       <POSDashboard />
+                     </PrivateRoute>
+                   } 
                 />
                 <Route path="*" element={<Navigate to="/" />} />
               </Routes>
             </main>
             
-            <footer className="h-10 bg-white border-t border-bento-border flex items-center justify-between px-8 shrink-0 text-[10px] text-bento-muted font-bold uppercase tracking-wider">
-              <div className="flex gap-8">
-                <span>System Status: <span className="text-green-500">Online</span></span>
-                <span>Powered by AI Studio</span>
-              </div>
-              <div className="flex gap-4">
-                <span>© 2026 Sweet Bend Shop</span>
-              </div>
-            </footer>
+            {!['/admin', '/pos'].includes(currentPath) && (
+              <footer className="h-10 bg-white border-t border-bento-border flex items-center justify-between px-8 shrink-0 text-[10px] text-bento-muted font-bold uppercase tracking-wider">
+                <div className="flex gap-8">
+                  <span>System Status: <span className="text-green-500">Online</span></span>
+                </div>
+                <div className="flex gap-4">
+                  <span>© 2026 Sweet Bend Shop</span>
+                </div>
+              </footer>
+            )}
           </div>
         </Router>
       </AuthProvider>
     </QueryClientProvider>
   );
+}
+
+function AppContent({ onPathChange }: { onPathChange: (path: string) => void }) {
+  const location = useLocation();
+  
+  useEffect(() => {
+    onPathChange(location.pathname);
+  }, [location, onPathChange]);
+
+  return <Navbar />;
 }
 

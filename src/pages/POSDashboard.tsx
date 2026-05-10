@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { collection, query, onSnapshot, addDoc, setDoc, doc, updateDoc, orderBy, limit, getDocs, where, Timestamp } from 'firebase/firestore';
+import { collection, query, onSnapshot, addDoc, setDoc, doc, updateDoc, deleteDoc, orderBy, limit, getDocs, where, Timestamp } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { useAuth } from '../hooks/useAuth';
 import { 
@@ -10,7 +10,7 @@ import {
   Plus, Search, ShoppingCart, User, Bell, 
   Trash2, Printer, CheckCircle, Clock, 
   TrendingUp, Package, MessageCircle, ArrowRight,
-  Edit2, Save, X as XIcon, AlertTriangle
+  Edit2, Save, X as XIcon, AlertTriangle, Phone
 } from 'lucide-react';
 import { formatCurrency } from '../lib/utils';
 import { useReactToPrint } from 'react-to-print';
@@ -109,6 +109,7 @@ export default function POSDashboard() {
   });
   const [isCustomizingTemplate, setIsCustomizingTemplate] = useState(false);
   const [selectedInquiry, setSelectedInquiry] = useState<Inquiry | AppNotification | null>(null);
+  const [showMobileCart, setShowMobileCart] = useState(false);
 
   const markAsRead = async (item: any) => {
     const collectionName = item.userId ? 'inquiries' : 'notifications';
@@ -163,6 +164,12 @@ export default function POSDashboard() {
       setSales(snap.docs.map(d => ({ id: d.id, ...d.data() } as Sale)));
     }, (err) => handleFirestoreError(err, OperationType.LIST, 'sales'));
 
+    // Active Sessions real-time sync
+    onSnapshot(collection(db, 'active_sessions'), (snap) => {
+      const sessions = snap.docs.map(d => ({ id: d.id, ...d.data() } as CustomerTab));
+      setCustomerTabs(sessions);
+    }, (err) => handleFirestoreError(err, OperationType.LIST, 'active_sessions'));
+
     onSnapshot(doc(db, 'settings', 'invoice'), (snap) => {
       if (snap.exists()) {
         setInvoiceSettings(snap.data() as any);
@@ -170,22 +177,30 @@ export default function POSDashboard() {
     }, (err) => handleFirestoreError(err, OperationType.GET, 'settings/invoice'));
   }, []);
 
-  const addTab = () => {
-    const newId = Math.random().toString(36).substr(2, 9);
-    const newTab: CustomerTab = { 
-      id: newId, 
+  const addTab = async () => {
+    const newTab: any = { 
       items: [], 
       type: 'take',
-      customerId: profile?.role === 'customer' ? profile.uid : undefined,
-      customerName: profile?.role === 'customer' ? profile.name : undefined
+      customerId: (profile?.role === 'customer' ? profile.uid : null) || null,
+      customerName: (profile?.role === 'customer' ? profile.name : null) || null,
+      updatedAt: new Date()
     };
-    setCustomerTabs([...customerTabs, newTab]);
-    setActiveCardId(newId);
+
+    try {
+      const docRef = await addDoc(collection(db, 'active_sessions'), newTab);
+      setActiveCardId(docRef.id);
+    } catch (err) {
+      handleFirestoreError(err, OperationType.CREATE, 'active_sessions');
+    }
   };
 
-  const removeTab = (id: string) => {
-    setCustomerTabs(customerTabs.filter(t => t.id !== id));
-    if (activeCardId === id) setActiveCardId(null);
+  const removeTab = async (id: string) => {
+    try {
+      await deleteDoc(doc(db, 'active_sessions', id));
+      if (activeCardId === id) setActiveCardId(null);
+    } catch (err) {
+      handleFirestoreError(err, OperationType.DELETE, `active_sessions/${id}`);
+    }
   };
 
   const startRenaming = (tab: CustomerTab) => {
@@ -193,65 +208,125 @@ export default function POSDashboard() {
     setTempTabName(tab.customerName || `T-${tab.id.slice(0, 3)}`);
   };
 
-  const saveTabName = () => {
+  const saveTabName = async () => {
     if (!renamingTabId) return;
-    setCustomerTabs(tabs => tabs.map(t => t.id === renamingTabId ? { ...t, customerName: tempTabName } : t));
-    setRenamingTabId(null);
+    try {
+      await updateDoc(doc(db, 'active_sessions', renamingTabId), {
+        customerName: tempTabName,
+        updatedAt: new Date()
+      });
+      setRenamingTabId(null);
+    } catch (err) {
+      handleFirestoreError(err, OperationType.UPDATE, `active_sessions/${renamingTabId}`);
+    }
   };
 
-  const assignCustomer = (tabId: string, customer: UserProfile | null) => {
-    setCustomerTabs(tabs => tabs.map(t => {
-      if (t.id !== tabId) return t;
-      return {
-        ...t,
-        customerId: customer?.uid || undefined,
-        customerName: customer?.name || undefined
-      };
-    }));
-    setSelectingCustomerFor(null);
-    setCustomerSearch('');
+  const assignCustomer = async (tabId: string, customer: UserProfile | null) => {
+    try {
+      await updateDoc(doc(db, 'active_sessions', tabId), {
+        customerId: customer?.uid || null,
+        customerName: customer?.name || null,
+        updatedAt: new Date()
+      });
+      setSelectingCustomerFor(null);
+      setCustomerSearch('');
+    } catch (err) {
+      handleFirestoreError(err, OperationType.UPDATE, `active_sessions/${tabId}`);
+    }
   };
 
   const activeTabDetails = customerTabs.find(t => t.id === activeCardId);
 
-  const addItemToActiveTab = (product: Product, quantity: number = 1) => {
-    if (!activeCardId) return;
-    setCustomerTabs(tabs => tabs.map(tab => {
-      if (tab.id !== activeCardId) return tab;
-      const existing = tab.items.find(i => i.productId === product.id);
-      if (existing) {
-        return {
-          ...tab,
-          items: tab.items.map(i => i.productId === product.id 
-            ? { ...i, quantity: i.quantity + quantity, total: (i.quantity + quantity) * i.price } 
-            : i
-          )
-        };
+  const addItemToActiveTab = async (product: Product, quantity: number = 1) => {
+    if (!activeCardId || !activeTabDetails) return;
+    
+    const existing = activeTabDetails.items.find(i => i.productId === product.id);
+    let newItems: SaleItem[];
+
+    if (existing) {
+      newItems = activeTabDetails.items.map(i => i.productId === product.id 
+        ? { ...i, quantity: i.quantity + quantity, total: (i.quantity + quantity) * i.price } 
+        : i
+      );
+    } else {
+      newItems = [...activeTabDetails.items, {
+        productId: product.id,
+        name: product.name,
+        price: product.price,
+        quantity: quantity,
+        total: quantity * product.price,
+        unit: 'kg'
+      }];
+    }
+
+    try {
+      await updateDoc(doc(db, 'active_sessions', activeCardId), {
+        items: newItems,
+        updatedAt: new Date()
+      });
+    } catch (err) {
+      handleFirestoreError(err, OperationType.UPDATE, `active_sessions/${activeCardId}`);
+    }
+  };
+
+  const addCustomItem = async () => {
+    if (!activeCardId || !activeTabDetails) return;
+    const customId = `custom-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+    const newItems = [...activeTabDetails.items, {
+      productId: customId,
+      name: 'Custom Item',
+      price: 0,
+      quantity: 1,
+      total: 0,
+      unit: 'nos'
+    }];
+
+    try {
+      await updateDoc(doc(db, 'active_sessions', activeCardId), {
+        items: newItems,
+        updatedAt: new Date()
+      });
+    } catch (err) {
+      handleFirestoreError(err, OperationType.UPDATE, `active_sessions/${activeCardId}`);
+    }
+  };
+
+  const updateItemDetails = async (productId: string, updates: Partial<SaleItem>) => {
+    if (!activeCardId || !activeTabDetails) return;
+    
+    const newItems = activeTabDetails.items.map(i => {
+      if (i.productId !== productId) return i;
+      const updated = { ...i, ...updates };
+      if ('price' in updates || 'quantity' in updates) {
+        updated.total = updated.quantity * updated.price;
       }
-      return {
-        ...tab,
-        items: [...tab.items, {
-          productId: product.id,
-          name: product.name,
-          price: product.price,
-          quantity: quantity,
-          total: quantity * product.price
-        }]
-      };
-    }));
+      return updated;
+    }).filter(i => i.quantity > 0 || updates.name !== undefined);
+
+    try {
+      await updateDoc(doc(db, 'active_sessions', activeCardId), {
+        items: newItems,
+        updatedAt: new Date()
+      });
+    } catch (err) {
+      handleFirestoreError(err, OperationType.UPDATE, `active_sessions/${activeCardId}`);
+    }
+  };
+
+  const updateTabType = async (type: 'take' | 'pre') => {
+    if (!activeCardId) return;
+    try {
+      await updateDoc(doc(db, 'active_sessions', activeCardId), {
+        type,
+        updatedAt: new Date()
+      });
+    } catch (err) {
+      handleFirestoreError(err, OperationType.UPDATE, `active_sessions/${activeCardId}`);
+    }
   };
 
   const updateItemQty = (productId: string, qty: number) => {
-    setCustomerTabs(tabs => tabs.map(tab => {
-      if (tab.id !== activeCardId) return tab;
-      return {
-        ...tab,
-        items: tab.items.map(i => i.productId === productId 
-          ? { ...i, quantity: qty, total: qty * i.price } 
-          : i
-        ).filter(i => i.quantity > 0)
-      };
-    }));
+    updateItemDetails(productId, { quantity: Math.max(0, qty) });
   };
 
   const handleQuickStockUpdate = async (productId: string, currentStock: number, delta: number) => {
@@ -397,7 +472,7 @@ export default function POSDashboard() {
       
       await batch.commit();
       alert('Order processed and stock updated!');
-      removeTab(activeCardId!);
+      await removeTab(activeCardId!);
     } catch (err) {
       handleFirestoreError(err, OperationType.WRITE, 'checkout-batch');
     }
@@ -476,7 +551,7 @@ export default function POSDashboard() {
   </div>;
 
   return (
-    <div className="flex-1 p-4 grid grid-cols-12 gap-4 h-[calc(100vh-64px-40px)] overflow-hidden bg-bento-bg/10 relative">
+    <div className="flex-1 p-2 md:p-4 grid grid-cols-1 md:grid-cols-12 gap-2 md:gap-4 h-[calc(100vh-64px)] overflow-hidden bg-bento-bg/10 relative">
       {error && (
         <div className="absolute top-4 right-4 left-4 z-[100] bg-bento-danger text-white p-4 rounded-2xl flex justify-between items-center shadow-2xl border border-white/20 animate-in fade-in slide-in-from-top-8">
            <div className="flex items-center gap-3">
@@ -489,8 +564,8 @@ export default function POSDashboard() {
         </div>
       )}
       
-      {/* COLUMN 1: Command & Metrics */}
-      <section className="col-span-2 flex flex-col gap-4 overflow-hidden">
+      {/* COLUMN 1: Command & Metrics - Hidden on small screens, or handled via bottom nav */}
+      <section className="hidden md:flex md:col-span-2 flex-col gap-4 overflow-hidden">
         <div className="bg-white rounded-[24px] border border-bento-border p-4 shadow-sm">
           <div className="flex items-center gap-3 mb-6 p-2 bg-bento-bg rounded-2xl border border-bento-border">
             <div className="w-8 h-8 rounded-xl bg-bento-accent-dark text-white flex items-center justify-center font-black text-xs">
@@ -509,7 +584,7 @@ export default function POSDashboard() {
               { id: 'inquiries', icon: Bell, label: 'Feed', count: inquiries.filter(i => i.status === 'unread').length + notifications.filter(n => n.status === 'unread').length },
             ].map((item) => (
               <button
-                key={item.id}
+                key={`sidebar-${item.id}`}
                 onClick={() => setActiveTab(item.id as any)}
                 className={`w-full flex items-center gap-3 px-4 py-3 rounded-2xl transition-all relative ${activeTab === item.id ? 'bg-bento-accent text-white shadow-lg shadow-bento-accent/20 font-black' : 'text-bento-muted hover:bg-bento-bg font-bold'}`}
               >
@@ -537,8 +612,8 @@ export default function POSDashboard() {
            <div>
               <h4 className="text-[9px] font-black uppercase tracking-wider text-bento-muted mb-4 opacity-40">Critical Stock</h4>
               <div className="space-y-3">
-                 {[...outOfStockItems, ...lowStockThresholdItems].slice(0, 3).map(p => (
-                   <div key={p.id} className="text-[10px] flex justify-between items-center group">
+                 {[...outOfStockItems, ...lowStockThresholdItems].slice(0, 3).map((p, idx) => (
+                   <div key={`critical-${p.id}-${idx}`} className="text-[10px] flex justify-between items-center group">
                       <span className="font-bold truncate pr-2">{p.name}</span>
                       <span className={`font-black shrink-0 ${p.stockLevel <= 0 ? 'text-bento-danger' : 'text-amber-500'}`}>{p.stockLevel}kg</span>
                    </div>
@@ -551,68 +626,72 @@ export default function POSDashboard() {
       {activeTab === 'sales' ? (
         <>
           {/* COLUMN 2: Catalog Engine */}
-          <section className="col-span-6 bg-white rounded-[32px] border border-bento-border shadow-sm flex flex-col overflow-hidden">
-            <div className="p-6 border-b border-bento-border">
-              <div className="flex justify-between items-center mb-6">
+          <section className={`${showMobileCart ? 'hidden' : 'flex'} col-span-1 md:col-span-6 bg-white rounded-[24px] md:rounded-[32px] border border-bento-border shadow-sm flex flex-col overflow-hidden`}>
+            <div className="p-5 md:p-6 border-b border-bento-border">
+              <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6">
                  <div>
-                   <h2 className="text-xl font-black tracking-tight mb-1">Catalog</h2>
+                   <h2 className="text-xl md:text-2xl font-black tracking-tight mb-1">Catalog</h2>
                    <p className="text-[10px] font-bold text-bento-muted tracking-widest uppercase">Premium Selections</p>
                  </div>
-                 <div className="flex gap-2">
+                 <div className="flex gap-2 w-full sm:w-auto">
                     <select 
-                      className="px-4 py-2 bg-bento-bg border border-bento-border rounded-xl text-[9px] font-black uppercase tracking-widest outline-none focus:ring-1 focus:ring-bento-accent cursor-pointer"
+                      className="flex-1 sm:flex-initial px-4 py-3 bg-bento-bg border border-bento-border rounded-2xl text-[10px] font-black uppercase tracking-widest outline-none focus:ring-2 focus:ring-bento-accent cursor-pointer appearance-none transition-all"
                       value={selectedCategory}
                       onChange={(e) => setSelectedCategory(e.target.value)}
                     >
                       {categories.map(cat => (
-                        <option key={cat} value={cat}>{cat === 'all' ? 'All' : cat}</option>
+                        <option key={`cat-${cat}`} value={cat}>{cat === 'all' ? 'All Categories' : cat}</option>
                       ))}
                     </select>
                  </div>
               </div>
 
-              <div className="relative">
-                <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-bento-muted" />
+              <div className="relative group">
+                <Search className="absolute left-5 top-1/2 -translate-y-1/2 w-5 h-5 text-bento-muted group-focus-within:text-bento-accent transition-colors" />
                 <input 
-                  className="w-full pl-12 pr-4 py-4 bg-bento-bg border border-bento-border rounded-2xl text-sm font-bold focus:ring-1 focus:ring-bento-accent outline-none"
-                  placeholder="Find product..."
+                  className="w-full pl-14 pr-6 py-4 md:py-5 bg-bento-bg border border-bento-border rounded-[24px] text-sm font-bold focus:ring-2 focus:ring-bento-accent focus:bg-white outline-none transition-all shadow-inner"
+                  placeholder="Search catalog..."
                   value={search}
                   onChange={e => setSearch(e.target.value)}
                 />
               </div>
             </div>
 
-            <div className="flex-1 overflow-y-auto p-6 custom-scrollbar">
-               <div className="grid grid-cols-2 gap-4">
+            <div className="flex-1 overflow-y-auto p-4 md:p-8 custom-scrollbar bg-bento-bg/5">
+               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-2 xl:grid-cols-3 gap-4 md:gap-6">
                   {filteredProducts.map(p => (
                     <motion.div 
-                      key={p.id}
-                      whileHover={{ y: -2 }}
+                      key={`catalog-product-${p.id}`}
+                      whileTap={{ scale: 0.98 }}
+                      whileHover={{ y: -4, shadow: '0 20px 25px -5px rgb(0 0 0 / 0.1)' }}
                       onClick={() => addItemToActiveTab(p)}
-                      className="bg-white border border-bento-border rounded-[24px] p-4 cursor-pointer hover:border-bento-accent hover:shadow-xl transition-all group relative overflow-hidden"
+                      className="bg-white border border-bento-border rounded-[28px] p-5 cursor-pointer hover:border-bento-accent transition-all group relative overflow-hidden flex flex-col h-full"
                     >
-                      <div className="aspect-[4/3] bg-bento-bg rounded-2xl mb-4 overflow-hidden relative">
-                         <img src={p.photoUrl} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" referrerPolicy="no-referrer" />
-                         <div className="absolute top-2 right-2 px-2 py-0.5 bg-white/90 backdrop-blur rounded-full text-[9px] font-black uppercase tracking-widest border border-bento-border">
+                      <div className="aspect-square bg-bento-bg rounded-[22px] mb-5 overflow-hidden relative shrink-0">
+                         <img src={p.photoUrl} className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-700" referrerPolicy="no-referrer" />
+                         <div className="absolute top-3 right-3 px-3 py-1 bg-white/95 backdrop-blur rounded-full text-[9px] font-black uppercase tracking-widest border border-bento-border shadow-sm">
                             {p.category}
                          </div>
                       </div>
-                      <h3 className="font-black text-sm mb-1 truncate">{p.name}</h3>
-                      <div className="flex justify-between items-end">
-                         <div>
-                            <motion.p 
-                              key={p.stockLevel}
-                              initial={{ scale: 1.2, color: '#815431' }}
-                              animate={{ scale: 1, color: '#64748b' }}
-                              className="text-[10px] font-bold text-bento-muted uppercase"
-                            >
-                              {p.stockLevel}kg avail.
-                            </motion.p>
-                            <p className="text-base font-black text-bento-accent-dark mt-1">{formatCurrency(p.price)}</p>
-                         </div>
-                         <div className="w-8 h-8 rounded-xl bg-bento-bg flex items-center justify-center text-bento-muted group-hover:bg-bento-accent group-hover:text-white transition-all">
-                            <Plus className="w-4 h-4" />
-                         </div>
+                      
+                      <div className="flex-1">
+                        <h3 className="font-black text-sm md:text-base mb-2 group-hover:text-bento-accent transition-colors line-clamp-1">{p.name}</h3>
+                        <div className="flex justify-between items-end gap-2">
+                           <div>
+                              <motion.p 
+                                key={`stock-display-${p.id}-${p.stockLevel}`}
+                                initial={{ opacity: 0.5 }}
+                                animate={{ opacity: 1 }}
+                                className={`text-[10px] font-bold uppercase tracking-wider mb-1 ${p.stockLevel <= p.lowStockThreshold ? 'text-bento-danger' : 'text-bento-muted'}`}
+                              >
+                                {p.stockLevel} units remaining
+                              </motion.p>
+                              <p className="text-lg font-black text-bento-accent-dark tracking-tight">{formatCurrency(p.price)}</p>
+                           </div>
+                           <div className="w-12 h-12 md:w-14 md:h-14 rounded-2xl md:rounded-[20px] bg-bento-bg flex items-center justify-center text-bento-muted group-hover:bg-bento-accent group-hover:text-white transition-all shadow-sm group-hover:shadow-lg group-hover:shadow-bento-accent/30 group-active:scale-90">
+                              <Plus className="w-6 h-6 md:w-7 md:h-7" />
+                           </div>
+                        </div>
                       </div>
                     </motion.div>
                   ))}
@@ -621,21 +700,27 @@ export default function POSDashboard() {
           </section>
 
           {/* COLUMN 3: Sessions & Checkout */}
-          <section className="col-span-4 flex flex-col gap-4 overflow-hidden">
-            <div className="bg-white rounded-[24px] border border-bento-border p-5 shadow-sm">
+          <section className={`${showMobileCart ? 'flex' : 'hidden'} md:flex col-span-1 md:col-span-4 flex-col gap-4 overflow-hidden h-full`}>
+            <div className="bg-white rounded-[24px] border border-bento-border p-4 md:p-5 shadow-sm">
                <div className="flex justify-between items-center mb-4">
                   <h3 className="text-[9px] font-black uppercase tracking-widest text-bento-muted">Sessions</h3>
-                  <button onClick={addTab} className="w-6 h-6 rounded-lg bg-bento-accent-dark text-white flex items-center justify-center hover:scale-105 transition-transform">
-                     <Plus className="w-3 h-3" />
-                  </button>
+                  <div className="flex gap-2">
+                    <button onClick={addCustomItem} className="px-2 md:px-3 py-1.5 rounded-lg bg-bento-bg border border-bento-border text-bento-muted hover:text-bento-accent-dark flex items-center gap-1.5 transition-all group">
+                       <Plus className="w-3 h-3" />
+                       <span className="text-[8px] font-black uppercase tracking-widest">Custom</span>
+                    </button>
+                    <button onClick={addTab} className="w-8 h-8 rounded-lg bg-bento-accent-dark text-white flex items-center justify-center hover:scale-105 transition-transform shadow-lg shadow-bento-accent/20">
+                       <Plus className="w-4 h-4" />
+                    </button>
+                  </div>
                </div>
                <div className="flex gap-2 overflow-x-auto no-scrollbar pb-1">
-                  {customerTabs.map(tab => (
-                    <div key={tab.id} className="relative group/tab">
+                  {customerTabs.map((tab, idx) => (
+                    <div key={`session-tab-${tab.id}-${idx}`} className="relative group/tab">
                       {renamingTabId === tab.id ? (
                         <input
                           autoFocus
-                          className="shrink-0 px-4 py-2 rounded-xl border bg-white border-bento-accent-dark text-[10px] font-black uppercase outline-none min-w-[100px]"
+                          className="shrink-0 px-3 md:px-4 py-2 rounded-xl border bg-white border-bento-accent-dark text-[9px] md:text-[10px] font-black uppercase outline-none min-w-[80px] md:min-w-[100px]"
                           value={tempTabName}
                           onChange={e => setTempTabName(e.target.value)}
                           onBlur={saveTabName}
@@ -645,9 +730,9 @@ export default function POSDashboard() {
                         <button 
                           onClick={() => setActiveCardId(tab.id)}
                           onDoubleClick={() => startRenaming(tab)}
-                          className={`shrink-0 px-4 py-3 rounded-2xl border transition-all text-left min-w-[100px] ${activeCardId === tab.id ? 'bg-bento-accent-dark text-white border-transparent' : 'bg-white border-bento-border text-bento-muted'}`}
+                          className={`shrink-0 px-3 md:px-4 py-2.5 md:py-3 rounded-xl md:rounded-2xl border transition-all text-left min-w-[80px] md:min-w-[100px] ${activeCardId === tab.id ? 'bg-bento-accent-dark text-white border-transparent' : 'bg-white border-bento-border text-bento-muted'}`}
                         >
-                           <p className="text-[10px] font-black uppercase truncate">{tab.customerName || `T-${tab.id.slice(0, 3)}`}</p>
+                           <p className="text-[9px] md:text-[10px] font-black uppercase truncate">{tab.customerName || `T-${tab.id.slice(0, 3)}`}</p>
                         </button>
                       )}
                     </div>
@@ -655,7 +740,7 @@ export default function POSDashboard() {
                </div>
             </div>
 
-            <div className="flex-1 bg-white rounded-[32px] border border-bento-border shadow-sm flex flex-col overflow-hidden">
+            <div className="flex-1 bg-white rounded-[24px] md:rounded-[32px] border border-bento-border shadow-sm flex flex-col overflow-hidden">
                {!activeTabDetails ? (
                   <div className="flex-1 flex flex-col items-center justify-center p-8 text-center opacity-40">
                      <ShoppingCart className="w-8 h-8 mb-4" />
@@ -673,8 +758,8 @@ export default function POSDashboard() {
                        <div className="flex gap-2">
                           {(['take', 'pre'] as const).map(type => (
                              <button
-                                key={type}
-                                onClick={() => setCustomerTabs(tabs => tabs.map(t => t.id === activeCardId ? { ...t, type } : t))}
+                                key={`pos-tab-type-${type}`}
+                                onClick={() => updateTabType(type)}
                                 className={`flex-1 py-2 rounded-xl text-[9px] font-black uppercase border transition-all ${activeTabDetails.type === type ? 'bg-white border-bento-accent text-bento-accent-dark shadow-sm' : 'border-transparent text-bento-muted'}`}
                              >
                                {type === 'take' ? 'Counter' : 'Advance'}
@@ -684,25 +769,46 @@ export default function POSDashboard() {
                     </div>
 
                     <div className="flex-1 overflow-y-auto p-4 space-y-4 custom-scrollbar">
-                       {activeTabDetails.items.map(item => (
-                          <div key={item.productId} className="flex gap-3 items-center group">
+                       {activeTabDetails.items.map((item, idx) => (
+                          <div key={`cart-item-${item.productId}-${idx}`} className="flex gap-4 items-start group bg-bento-bg/5 p-3 rounded-2xl border border-transparent hover:border-bento-border hover:bg-white transition-all">
                              <div className="flex-1 min-w-0">
-                                <p className="text-xs font-black truncate">{item.name}</p>
-                                <div className="flex items-center gap-2 mt-1">
+                                <input 
+                                   className="w-full text-xs font-black bg-transparent border-none p-0 focus:ring-0 focus:bg-bento-bg/10 rounded px-1 -ml-1 mb-1 transition-colors"
+                                   value={item.name}
+                                   onChange={(e) => updateItemDetails(item.productId, { name: e.target.value })}
+                                />
+                                <div className="flex items-center gap-3">
                                    <div className="flex items-center bg-white border border-bento-border rounded-lg overflow-hidden shadow-sm">
-                                      <button onClick={() => updateItemQty(item.productId, item.quantity - 0.5)} className="px-2 py-0.5 hover:bg-bento-bg text-[10px] font-black">-</button>
-                                      <span className="px-2 text-[9px] font-black">{item.quantity}kg</span>
-                                      <button onClick={() => updateItemQty(item.productId, item.quantity + 0.5)} className="px-2 py-0.5 hover:bg-bento-bg text-[10px] font-black">+</button>
+                                      <button onClick={() => updateItemQty(item.productId, item.quantity - (item.unit === 'nos' ? 1 : 0.5))} className="px-2 py-1 hover:bg-bento-bg text-[10px] font-black">-</button>
+                                      <input 
+                                         type="number"
+                                         className="w-12 text-center text-[9px] font-black bg-transparent border-none p-0 focus:ring-0 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                                         value={item.quantity}
+                                         onChange={(e) => updateItemQty(item.productId, parseFloat(e.target.value) || 0)}
+                                      />
+                                      <button onClick={() => updateItemQty(item.productId, item.quantity + (item.unit === 'nos' ? 1 : 0.5))} className="px-2 py-1 hover:bg-bento-bg text-[10px] font-black">+</button>
                                    </div>
+                                   <input 
+                                      className="w-12 text-[9px] font-black bg-transparent border-none p-0 focus:ring-0 uppercase text-bento-muted hover:text-bento-accent-dark transition-colors"
+                                      value={item.unit || 'kg'}
+                                      onChange={(e) => updateItemDetails(item.productId, { unit: e.target.value })}
+                                   />
                                 </div>
                              </div>
-                             <div className="text-right flex items-center gap-3">
-                                <div>
-                                   <p className="text-xs font-black text-bento-accent-dark">{formatCurrency(item.total)}</p>
+                             <div className="text-right flex flex-col items-end gap-1">
+                                <div className="flex items-center gap-1 group/price">
+                                   <span className="text-[8px] font-black text-bento-muted opacity-40">@</span>
+                                   <input 
+                                      type="number"
+                                      className="w-20 text-[10px] font-black text-right bg-transparent border-none p-0 focus:ring-0 focus:bg-bento-bg/10 rounded px-1 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                                      value={item.price}
+                                      onChange={(e) => updateItemDetails(item.productId, { price: parseFloat(e.target.value) || 0 })}
+                                   />
                                 </div>
+                                <p className="text-xs font-black text-bento-accent-dark">{formatCurrency(item.total)}</p>
                                 <button 
                                   onClick={() => updateItemQty(item.productId, 0)}
-                                  className="p-1 text-bento-muted hover:text-bento-danger opacity-0 group-hover:opacity-100 transition-opacity"
+                                  className="mt-1 p-1 text-bento-muted hover:text-bento-danger opacity-0 group-hover:opacity-100 transition-opacity"
                                 >
                                    <Trash2 className="w-3.5 h-3.5" />
                                 </button>
@@ -746,8 +852,8 @@ export default function POSDashboard() {
                     onChange={(e) => setReportCustomerId(e.target.value)}
                  >
                     <option value="all">All Clients</option>
-                    {customers.map(c => (
-                      <option key={c.uid} value={c.uid}>{c.name}</option>
+                    {customers.map((c, idx) => (
+                      <option key={`pos-report-customer-${c.uid}-${idx}`} value={c.uid}>{c.name}</option>
                     ))}
                  </select>
                </div>
@@ -776,7 +882,7 @@ export default function POSDashboard() {
               { label: 'Stock Low', value: lowStockThresholdItems.length, color: 'bg-white' },
               { label: 'System', value: 'Active', color: 'bg-white' },
             ].map((stat, idx) => (
-              <div key={idx} className={`${stat.color} p-6 rounded-[28px] border border-bento-border shadow-sm`}>
+              <div key={`pos-stat-${stat.label}-${idx}`} className={`${stat.color} p-6 rounded-[28px] border border-bento-border shadow-sm`}>
                  <p className="text-[10px] font-black uppercase tracking-widest opacity-60 mb-4">{stat.label}</p>
                  <p className="text-2xl font-black">{stat.value}</p>
               </div>
@@ -817,8 +923,8 @@ export default function POSDashboard() {
                          </tr>
                       </thead>
                       <tbody className="divide-y divide-bento-bg">
-                         {filteredSalesForReports.slice(0, 10).map((sale) => (
-                            <tr key={sale.id} className="group hover:bg-bento-bg/30 transition-colors">
+                         {filteredSalesForReports.slice(0, 10).map((sale, idx) => (
+                            <tr key={`pos-sale-item-${sale.id}-${idx}`} className="group hover:bg-bento-bg/30 transition-colors">
                                <td className="py-4 text-[10px] font-mono text-bento-muted">#{sale.id.slice(0, 8).toUpperCase()}</td>
                                <td className="py-4">
                                   <p className="text-xs font-black">{sale.customerName || 'Guest'}</p>
@@ -863,12 +969,12 @@ export default function POSDashboard() {
                  const timeA = a.createdAt?.toDate ? a.createdAt.toDate().getTime() : new Date(a.createdAt).getTime();
                  const timeB = b.createdAt?.toDate ? b.createdAt.toDate().getTime() : new Date(b.createdAt).getTime();
                  return timeB - timeA;
-              }).map((n: any) => (
+              }).map((n: any, idx) => (
                 <motion.div 
                   layout
                   initial={{ opacity: 0, x: -10 }}
                   animate={{ opacity: 1, x: 0 }}
-                  key={n.id} 
+                  key={`system-feed-${n.id}-${idx}`} 
                   onClick={() => {
                     setSelectedInquiry(n);
                     if (n.status === 'unread') markAsRead(n);
@@ -933,12 +1039,16 @@ export default function POSDashboard() {
             </div>
           </div>
           
-          {activeTabDetails?.customerName && (
-            <div className="mb-6 pb-4 border-b border-dashed border-gray-200">
-               <p className="text-[9px] font-bold uppercase tracking-widest text-gray-400 mb-1">Customer</p>
-               <p className="text-sm font-black uppercase">{activeTabDetails.customerName}</p>
-            </div>
-          )}
+                    {activeTabDetails?.customerName && (
+                      <div className="mb-4">
+                        <p className="text-[10px] uppercase font-bold tracking-widest text-gray-400 mb-1">Customer</p>
+                        <p className="text-sm font-black uppercase">{activeTabDetails.customerName}</p>
+                      </div>
+                    )}
+                    
+                    <div className="mb-6 pb-2 border-b-2 border-black">
+                      <p className="text-[10px] uppercase font-bold tracking-widest text-gray-400 mb-1">Items</p>
+                    </div>
 
           <table className="w-full text-xs mb-8">
             <thead>
@@ -949,11 +1059,16 @@ export default function POSDashboard() {
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
-              {activeTabDetails?.items.map(item => (
-                <tr key={item.productId}>
-                  <td className="py-4 font-medium">{item.name}</td>
-                  <td className="py-4 text-right font-mono">{item.quantity}kg</td>
-                  <td className="py-4 text-right font-bold">{formatCurrency(item.total)}</td>
+              {activeTabDetails?.items.map((item, idx) => (
+                <tr key={`receipt-item-${item.productId}-${idx}`} className="border-b border-dashed border-gray-200">
+                  <td className="py-4">
+                    <p className="font-black text-xs uppercase">{item.name}</p>
+                    <p className="text-[9px] font-medium text-gray-400 font-mono">@{formatCurrency(item.price)} per {item.unit || 'kg'}</p>
+                  </td>
+                  <td className="py-4 text-right">
+                    <span className="font-bold text-xs">{item.quantity}{item.unit || 'kg'}</span>
+                  </td>
+                  <td className="py-4 text-right font-black text-xs">{formatCurrency(item.total)}</td>
                 </tr>
               ))}
             </tbody>
@@ -991,33 +1106,124 @@ export default function POSDashboard() {
 
       {/* Print Customization Modal */}
       <AnimatePresence>
-        {showPrintModal && (
+        {!showPrintModal && activeTab === 'sales' && (
+        <div className="md:hidden fixed bottom-4 left-0 right-0 p-4 z-40">
+           <button 
+             onClick={() => setShowMobileCart(!showMobileCart)}
+             className="w-full py-4 bg-bento-accent-dark text-white rounded-2xl font-black uppercase tracking-widest shadow-2xl flex items-center justify-center gap-3"
+           >
+             {showMobileCart ? (
+               <>
+                 <ArrowRight className="w-5 h-5 rotate-180" />
+                 Back to Products
+               </>
+             ) : (
+               <>
+                 <ShoppingCart className="w-5 h-5" />
+                 View Cart ({activeTabDetails?.items.length || 0})
+               </>
+             )}
+           </button>
+        </div>
+      )}
+
+      {/* POS Mobile Top Nav (Tab selector) */}
+      <div className="md:hidden fixed top-16 left-0 right-0 bg-white border-b border-bento-border z-40 px-4 py-2 flex gap-2">
+         {[
+            { id: 'sales', icon: ShoppingCart, label: 'Sales' },
+            { id: 'reports', icon: TrendingUp, label: 'Stats' },
+            { id: 'inquiries', icon: Bell, label: 'Feed' },
+         ].map((item) => (
+            <button
+               key={`mobile-tab-${item.id}`}
+               onClick={() => {
+                 setActiveTab(item.id as any);
+                 setShowMobileCart(false);
+               }}
+               className={`flex-1 py-3 rounded-xl flex flex-col items-center gap-1 transition-all ${activeTab === item.id ? 'bg-bento-bg text-bento-accent-dark font-black' : 'text-bento-muted font-bold'}`}
+            >
+               <item.icon className="w-4 h-4" />
+               <span className="text-[8px] uppercase tracking-widest">{item.label}</span>
+            </button>
+         ))}
+      </div>
+
+      {showPrintModal && (
           <div className="fixed inset-0 z-[120] flex items-center justify-center p-4 bg-black/60 backdrop-blur-md">
             <motion.div 
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: 20 }}
-              className="bg-white w-full max-w-md rounded-[32px] overflow-hidden shadow-2xl p-8"
+              className="bg-white w-full max-w-4xl rounded-[32px] overflow-hidden shadow-2xl flex flex-col max-h-[90vh]"
             >
-              <div className="flex justify-between items-center mb-8">
-                 <h3 className="text-xl font-black tracking-tight">Print Options</h3>
-                 <button onClick={() => setShowPrintModal(false)} className="p-2 hover:bg-bento-bg rounded-xl">
+              <div className="p-8 border-b border-bento-border flex justify-between items-center bg-white shrink-0">
+                 <div>
+                   <h3 className="text-xl font-black tracking-tight">Print Checkout</h3>
+                   <p className="text-[10px] font-black uppercase tracking-widest text-bento-muted mt-1">Review & Format Invoice</p>
+                 </div>
+                 <button onClick={() => setShowPrintModal(false)} className="p-2 hover:bg-bento-bg rounded-xl transition-colors">
                     <XIcon className="w-5 h-5 text-bento-muted" />
                  </button>
               </div>
 
-              <div className="space-y-6">
-                 <div>
-                    <label className="text-[10px] font-black uppercase tracking-widest text-bento-muted mb-2 block">Custom Message</label>
+              <div className="flex-1 overflow-y-auto custom-scrollbar flex flex-col md:flex-row">
+                {/* Left Side: Preview */}
+                <div className="flex-1 bg-bento-bg/50 p-8 border-r border-bento-border">
+                  <div className="bg-white p-10 shadow-sm border border-bento-border rounded-2xl mx-auto max-w-[380px]">
+                    <div className="text-center mb-6">
+                      {invoiceSettings.shopLogo ? (
+                        <img src={invoiceSettings.shopLogo} className="w-16 h-16 mx-auto object-contain mb-4" referrerPolicy="no-referrer" />
+                      ) : (
+                        <div className="w-16 h-16 border-2 border-black rounded-full flex items-center justify-center mx-auto mb-4">
+                           <span className="font-black text-xl">{invoiceSettings.shopName.slice(0, 2).toUpperCase()}</span>
+                        </div>
+                      )}
+                      <h1 className="text-xl font-black uppercase tracking-tighter mb-1">{invoiceSettings.shopName}</h1>
+                      <p className="text-[8px] font-medium text-gray-400 mb-4">{invoiceSettings.shopAddress}</p>
+                    </div>
+
+                    <div className="space-y-4 mb-6">
+                      {activeTabDetails?.items.map((item, idx) => (
+                        <div key={`checkout-summary-item-${item.productId}-${idx}`} className="flex justify-between items-start text-[11px]">
+                          <div className="flex-1 pr-4">
+                            <p className="font-black uppercase">{item.name}</p>
+                            <p className="text-[9px] text-gray-400 font-mono">
+                              {item.quantity}{item.unit || 'kg'} x {formatCurrency(item.price)}
+                            </p>
+                          </div>
+                          <p className="font-black pt-0.5">{formatCurrency(item.total)}</p>
+                        </div>
+                      ))}
+                    </div>
+
+                    <div className="border-t-2 border-black pt-4 space-y-2">
+                       <div className="flex justify-between items-center text-xs font-black">
+                         <span className="uppercase tracking-widest text-gray-400">Total</span>
+                         <span className="text-lg">{formatCurrency(activeTabDetails?.items.reduce((sum, i) => sum + i.total, 0) || 0)}</span>
+                       </div>
+                    </div>
+
+                    {printOptions.message && (
+                      <div className="mt-6 pt-4 border-t border-dashed border-gray-200 text-center">
+                        <p className="text-[10px] font-black italic text-gray-600">"{printOptions.message}"</p>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* Right Side: Options */}
+                <div className="w-full md:w-[380px] p-8 space-y-8">
+                  <div>
+                    <label className="text-[10px] font-black uppercase tracking-widest text-bento-muted mb-3 block">Custom Message</label>
                     <textarea 
-                      className="w-full px-4 py-3 bg-bento-bg border border-bento-border rounded-2xl text-xs font-bold focus:ring-1 focus:ring-bento-accent outline-none min-h-[100px]"
-                      placeholder="E.g. Happy Birthday!, Thank you for your support..."
+                      className="w-full px-4 py-3 bg-bento-bg border border-bento-border rounded-2xl text-xs font-bold focus:ring-1 focus:ring-bento-accent outline-none min-h-[120px] transition-all"
+                      placeholder="E.g. Thank you for shopping with us!"
                       value={printOptions.message}
                       onChange={e => setPrintOptions({ ...printOptions, message: e.target.value })}
                     />
-                 </div>
+                  </div>
 
-                 <div className="grid grid-cols-2 gap-4">
+                  <div className="grid grid-cols-2 gap-4">
                     <div>
                        <label className="text-[10px] font-black uppercase tracking-widest text-bento-muted mb-2 block">Copies</label>
                        <input 
@@ -1029,83 +1235,84 @@ export default function POSDashboard() {
                        />
                     </div>
                     <div>
-                       <label className="text-[10px] font-black uppercase tracking-widest text-bento-muted mb-2 block">Printer</label>
+                       <label className="text-[10px] font-black uppercase tracking-widest text-bento-muted mb-2 block">Format</label>
                        <select 
                          className="w-full px-4 py-3 bg-bento-bg border border-bento-border rounded-xl text-xs font-bold focus:ring-1 focus:ring-bento-accent outline-none cursor-pointer"
                          value={printOptions.printer}
                          onChange={e => setPrintOptions({ ...printOptions, printer: e.target.value })}
                        >
                          <option value="Default">System Default</option>
-                         <option value="Thermal-POS">Thermal POS-80</option>
-                         <option value="Office-Jet">Back Office HP</option>
+                         <option value="Thermal-POS">Thermal 80mm</option>
+                         <option value="A4-Format">A4 Standard</option>
                        </select>
                     </div>
-                 </div>
+                  </div>
 
-                 <div className="pt-4 flex gap-3">
-                    <button 
-                      onClick={() => setShowPrintModal(false)}
-                      className="flex-1 py-4 bg-bento-bg rounded-2xl text-[10px] font-black uppercase tracking-widest text-bento-muted"
-                    >
-                      Cancel
-                    </button>
-                    <button 
-                      onClick={confirmPrint}
-                      className="flex-[2] py-4 bg-bento-accent-dark text-white rounded-2xl text-[10px] font-black uppercase tracking-widest flex items-center justify-center gap-2"
-                    >
-                      <Printer className="w-4 h-4" />
-                      Trigger Print
-                    </button>
-                 </div>
+                  {profile?.role === 'admin' && (
+                    <div className="pt-4">
+                       <button 
+                         onClick={() => setIsCustomizingTemplate(!isCustomizingTemplate)}
+                         className="w-full flex items-center justify-between py-3 px-4 bg-bento-bg border border-bento-border rounded-xl text-[10px] font-black uppercase tracking-widest text-bento-accent-dark hover:bg-white transition-all shadow-sm"
+                       >
+                         <span>Edit Invoice Template</span>
+                         <Edit2 className="w-4 h-4" />
+                       </button>
+                       
+                       {isCustomizingTemplate && (
+                         <div className="mt-4 space-y-4 bg-bento-bg/30 p-6 rounded-2xl border border-bento-border">
+                            <div className="grid grid-cols-2 gap-4">
+                               <div>
+                                  <label className="text-[9px] font-black uppercase tracking-widest text-bento-muted mb-1 block">Shop Name</label>
+                                  <input value={invoiceSettings.shopName || ''} onChange={e => setInvoiceSettings({...invoiceSettings, shopName: e.target.value})} className="w-full px-3 py-2 bg-white border border-bento-border rounded-xl text-xs font-bold" />
+                               </div>
+                               <div>
+                                  <label className="text-[9px] font-black uppercase tracking-widest text-bento-muted mb-1 block">Phone</label>
+                                  <input value={invoiceSettings.shopPhone || ''} onChange={e => setInvoiceSettings({...invoiceSettings, shopPhone: e.target.value})} className="w-full px-3 py-2 bg-white border border-bento-border rounded-xl text-xs font-bold" />
+                               </div>
+                            </div>
+                            <div>
+                               <label className="text-[9px] font-black uppercase tracking-widest text-bento-muted mb-1 block">Logo URL</label>
+                               <input value={invoiceSettings.shopLogo || ''} onChange={e => setInvoiceSettings({...invoiceSettings, shopLogo: e.target.value})} className="w-full px-3 py-2 bg-white border border-bento-border rounded-xl text-xs font-bold" placeholder="https://..." />
+                            </div>
+                            <div>
+                               <label className="text-[9px] font-black uppercase tracking-widest text-bento-muted mb-1 block">Address</label>
+                               <input value={invoiceSettings.shopAddress || ''} onChange={e => setInvoiceSettings({...invoiceSettings, shopAddress: e.target.value})} className="w-full px-3 py-2 bg-white border border-bento-border rounded-xl text-xs font-bold" />
+                            </div>
+                            <div>
+                               <label className="text-[9px] font-black uppercase tracking-widest text-bento-muted mb-1 block">Website</label>
+                               <input value={invoiceSettings.website || ''} onChange={e => setInvoiceSettings({...invoiceSettings, website: e.target.value})} className="w-full px-3 py-2 bg-white border border-bento-border rounded-xl text-xs font-bold" />
+                            </div>
+                            <div>
+                               <label className="text-[9px] font-black uppercase tracking-widest text-bento-muted mb-1 block">Slogan/Footer</label>
+                               <input value={invoiceSettings.footerMessage || ''} onChange={e => setInvoiceSettings({...invoiceSettings, footerMessage: e.target.value})} className="w-full px-3 py-2 bg-white border border-bento-border rounded-xl text-xs font-bold" />
+                            </div>
+                            <button 
+                              onClick={saveInvoiceSettings}
+                              className="w-full py-3 bg-bento-accent-dark text-white rounded-xl text-[9px] font-black uppercase tracking-widest shadow-lg shadow-bento-accent/20"
+                            >
+                              Save Template
+                            </button>
+                         </div>
+                       )}
+                    </div>
+                  )}
+                </div>
+              </div>
 
-                 {profile?.role === 'admin' && (
-                   <div className="mt-8 pt-8 border-t border-bento-border">
-                      <button 
-                        onClick={() => setIsCustomizingTemplate(!isCustomizingTemplate)}
-                        className="w-full flex items-center justify-between py-2 text-[10px] font-black uppercase tracking-widest text-bento-accent-dark"
-                      >
-                        <span>Template Settings</span>
-                        <Edit2 className="w-3 h-3" />
-                      </button>
-                      
-                      {isCustomizingTemplate && (
-                        <div className="mt-4 space-y-4 bg-bento-bg/30 p-6 rounded-2xl border border-bento-border">
-                           <div className="grid grid-cols-2 gap-4">
-                              <div>
-                                 <label className="text-[9px] font-black uppercase tracking-widest text-bento-muted mb-1 block">Shop Name</label>
-                                 <input value={invoiceSettings.shopName || ''} onChange={e => setInvoiceSettings({...invoiceSettings, shopName: e.target.value})} className="w-full px-3 py-2 bg-white border border-bento-border rounded-xl text-xs font-bold" />
-                              </div>
-                              <div>
-                                 <label className="text-[9px] font-black uppercase tracking-widest text-bento-muted mb-1 block">Phone</label>
-                                 <input value={invoiceSettings.shopPhone || ''} onChange={e => setInvoiceSettings({...invoiceSettings, shopPhone: e.target.value})} className="w-full px-3 py-2 bg-white border border-bento-border rounded-xl text-xs font-bold" />
-                              </div>
-                           </div>
-                           <div>
-                              <label className="text-[9px] font-black uppercase tracking-widest text-bento-muted mb-1 block">Logo URL</label>
-                              <input value={invoiceSettings.shopLogo || ''} onChange={e => setInvoiceSettings({...invoiceSettings, shopLogo: e.target.value})} className="w-full px-3 py-2 bg-white border border-bento-border rounded-xl text-xs font-bold" placeholder="https://..." />
-                           </div>
-                           <div>
-                              <label className="text-[9px] font-black uppercase tracking-widest text-bento-muted mb-1 block">Address</label>
-                              <input value={invoiceSettings.shopAddress || ''} onChange={e => setInvoiceSettings({...invoiceSettings, shopAddress: e.target.value})} className="w-full px-3 py-2 bg-white border border-bento-border rounded-xl text-xs font-bold" />
-                           </div>
-                           <div>
-                              <label className="text-[9px] font-black uppercase tracking-widest text-bento-muted mb-1 block">Website</label>
-                              <input value={invoiceSettings.website || ''} onChange={e => setInvoiceSettings({...invoiceSettings, website: e.target.value})} className="w-full px-3 py-2 bg-white border border-bento-border rounded-xl text-xs font-bold" />
-                           </div>
-                           <div>
-                              <label className="text-[9px] font-black uppercase tracking-widest text-bento-muted mb-1 block">Slogan/Footer</label>
-                              <input value={invoiceSettings.footerMessage || ''} onChange={e => setInvoiceSettings({...invoiceSettings, footerMessage: e.target.value})} className="w-full px-3 py-2 bg-white border border-bento-border rounded-xl text-xs font-bold" />
-                           </div>
-                           <button 
-                             onClick={saveInvoiceSettings}
-                             className="w-full py-3 bg-bento-accent-dark text-white rounded-xl text-[9px] font-black uppercase tracking-widest shadow-lg shadow-bento-accent/20"
-                           >
-                             Update Template
-                           </button>
-                        </div>
-                      )}
-                   </div>
-                 )}
+              <div className="p-8 border-t border-bento-border bg-bento-bg/20 flex gap-4 shrink-0">
+                <button 
+                  onClick={() => setShowPrintModal(false)}
+                  className="px-8 py-4 bg-white border border-bento-border rounded-2xl text-[10px] font-black uppercase tracking-widest text-bento-muted hover:bg-bento-bg transition-colors"
+                >
+                  Cancel
+                </button>
+                <button 
+                  onClick={confirmPrint}
+                  className="flex-1 py-4 bg-bento-accent-dark text-white rounded-2xl text-[10px] font-black uppercase tracking-widest shadow-lg shadow-bento-accent/20 flex items-center justify-center gap-3 hover:scale-[1.02] active:scale-[0.98] transition-all"
+                >
+                  <Printer className="w-5 h-5" />
+                  Generate Invoice & Print
+                </button>
               </div>
             </motion.div>
           </div>
@@ -1115,8 +1322,9 @@ export default function POSDashboard() {
       {/* Inquiry Detail Modal */}
       <AnimatePresence>
         {selectedInquiry && (
-          <div className="fixed inset-0 z-[150] flex items-center justify-center p-4 bg-black/60 backdrop-blur-md">
+          <div key="pos-inquiry-modal-backdrop" className="fixed inset-0 z-[150] flex items-center justify-center p-4 bg-black/60 backdrop-blur-md">
              <motion.div 
+               key="pos-inquiry-modal-content"
                initial={{ opacity: 0, scale: 0.95, y: 20 }}
                animate={{ opacity: 1, scale: 1, y: 0 }}
                exit={{ opacity: 0, scale: 0.95, y: 20 }}
@@ -1129,6 +1337,23 @@ export default function POSDashboard() {
                       </div>
                       <div>
                          <h3 className="text-xl font-black tracking-tight">{(selectedInquiry as any).title || (selectedInquiry as any).userName}</h3>
+                         {(selectedInquiry as any).userPhone && (
+                           <div className="flex items-center gap-3 mt-1">
+                             <div className="flex items-center gap-1.5">
+                               <Phone className="w-2.5 h-2.5 text-bento-muted" />
+                               <p className="text-[10px] font-black uppercase text-bento-accent-dark tracking-widest">{(selectedInquiry as any).userPhone}</p>
+                             </div>
+                             <a 
+                               href={`https://wa.me/${(selectedInquiry as any).userPhone.replace(/\D/g, '')}`}
+                               target="_blank"
+                               rel="noreferrer"
+                               className="flex items-center gap-1.5 px-2 py-1 bg-[#25D366]/10 text-[#25D366] rounded-lg hover:bg-[#25D366]/20 transition-colors"
+                             >
+                                <MessageCircle className="w-2.5 h-2.5" />
+                                <span className="text-[9px] font-black uppercase tracking-wider text-inherit">WhatsApp</span>
+                             </a>
+                           </div>
+                         )}
                          <p className="text-[10px] font-black uppercase tracking-widest text-bento-muted mt-1">
                            Received {format(selectedInquiry.createdAt?.toDate ? selectedInquiry.createdAt.toDate() : new Date(selectedInquiry.createdAt), 'MMM dd, HH:mm')}
                          </p>
@@ -1168,8 +1393,9 @@ export default function POSDashboard() {
       </AnimatePresence>
       <AnimatePresence>
         {selectingCustomerFor && (
-          <div className="fixed inset-0 z-[110] flex items-center justify-center p-4 bg-black/60 backdrop-blur-md">
+          <div key="pos-customer-modal-backdrop" className="fixed inset-0 z-[110] flex items-center justify-center p-4 bg-black/60 backdrop-blur-md">
              <motion.div 
+               key="pos-customer-modal-content"
                initial={{ opacity: 0, scale: 0.95 }}
                animate={{ opacity: 1, scale: 1 }}
                exit={{ opacity: 0, scale: 0.95 }}
@@ -1206,18 +1432,19 @@ export default function POSDashboard() {
                         c.name.toLowerCase().includes(customerSearch.toLowerCase()) ||
                         c.email?.toLowerCase().includes(customerSearch.toLowerCase()) ||
                         c.personalPhone?.includes(customerSearch)
-                      ).map(customer => (
-                        <button
-                          key={customer.uid}
-                          onClick={() => assignCustomer(selectingCustomerFor, customer)}
-                          className="w-full px-4 py-3 rounded-xl text-left hover:bg-bento-accent hover:text-white transition-all border border-transparent hover:border-bento-accent flex justify-between items-center group"
-                        >
-                          <div>
-                            <p className="font-bold text-sm">{customer.name}</p>
-                            <p className="text-[10px] opacity-70 uppercase tracking-wider">{customer.personalPhone || customer.email || 'No Contact'}</p>
+                      ).map((customer, idx) => (
+                          <div key={`customer-select-${customer.uid}-${idx}`} className="flex flex-col">
+                            <button
+                              onClick={() => assignCustomer(selectingCustomerFor, customer)}
+                              className="w-full px-4 py-3 rounded-xl text-left hover:bg-bento-accent hover:text-white transition-all border border-transparent hover:border-bento-accent flex justify-between items-center group"
+                            >
+                              <div>
+                                <p className="font-bold text-sm">{customer.name}</p>
+                                <p className="text-[10px] opacity-70 uppercase tracking-wider">{customer.personalPhone || customer.email || 'No Contact'}</p>
+                              </div>
+                              <ArrowRight className="w-4 h-4 opacity-0 group-hover:opacity-100 transition-opacity" />
+                            </button>
                           </div>
-                          <ArrowRight className="w-4 h-4 opacity-0 group-hover:opacity-100 transition-opacity" />
-                        </button>
                       ))}
                    </div>
                 </div>

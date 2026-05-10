@@ -24,6 +24,7 @@ export default function Login() {
       await signInWithEmailAndPassword(auth, email, password);
       navigate('/');
     } catch (err: any) {
+      console.error('Login Error:', err);
       setError(getAuthErrorMessage(err.code || err.message));
     } finally {
       setLoading(false);
@@ -39,6 +40,7 @@ export default function Login() {
       await signInWithPopup(auth, provider);
       navigate('/');
     } catch (err: any) {
+      console.error('Google Login Error:', err);
       setError(getAuthErrorMessage(err.code || err.message));
     } finally {
       setLoading(false);

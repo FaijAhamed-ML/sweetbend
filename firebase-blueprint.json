@@ -13,6 +13,19 @@
         "address": { "type": "string" }
       }
     },
+    "SettingInvoice": {
+      "title": "Invoice Settings",
+      "description": "Settings for invoice generation",
+      "type": "object",
+      "properties": {
+        "shopName": { "type": "string" },
+        "shopLogo": { "type": "string" },
+        "shopAddress": { "type": "string" },
+        "shopPhone": { "type": "string" },
+        "footerMessage": { "type": "string" },
+        "website": { "type": "string" }
+      }
+    },
     "User": {
       "title": "User Profile",
       "description": "User account information",
@@ -96,12 +109,30 @@
         "createdAt": { "type": "string", "format": "date-time" }
       },
       "required": ["type", "title", "message", "status"]
+    },
+    "POSSession": {
+      "title": "Active POS Session",
+      "description": "An active shopping cart shared across POS terminals",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "customerName": { "type": "string" },
+        "customerId": { "type": "string" },
+        "type": { "type": "string", "enum": ["take", "pre"] },
+        "items": { "type": "array" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "items"]
     }
   },
   "firestore": {
     "/settings/website": {
       "schema": "Setting",
       "description": "Global website configuration"
+    },
+    "/settings/invoice": {
+      "schema": "SettingInvoice",
+      "description": "Invoice template configuration"
     },
     "/users/{userId}": {
       "schema": "User",
@@ -122,6 +153,10 @@
     "/notifications/{notificationId}": {
       "schema": "Notification",
       "description": "System alerts and notifications"
+    },
+    "/active_sessions/{sessionId}": {
+      "schema": "POSSession",
+      "description": "Live POS shopping carts"
     }
   }
 }

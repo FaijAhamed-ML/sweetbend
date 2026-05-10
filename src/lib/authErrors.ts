@@ -1,7 +1,12 @@
 /**
  * Maps Firebase Auth error codes to user-friendly messages.
  */
-export const getAuthErrorMessage = (errorCode: string): string => {
+export const getAuthErrorMessage = (rawCode: string): string => {
+  // Extract error code if it's in the format "Firebase: Error (auth/code)."
+  const errorCode = rawCode.includes('(') 
+    ? rawCode.match(/\(([^)]+)\)/)?.[1] || rawCode 
+    : rawCode.replace('Firebase: Error ', '').replace('.', '').trim();
+
   switch (errorCode) {
     // Login & General
     case 'auth/invalid-email':
@@ -21,21 +26,36 @@ export const getAuthErrorMessage = (errorCode: string): string => {
     case 'auth/weak-password':
       return 'The password is too weak. Please use at least 6 characters with a mix of symbols.';
     case 'auth/operation-not-allowed':
-      return 'Email and password authentication is not enabled for this project.';
+      return 'This authentication method is not enabled. Please contact support.';
     
     // Popup/Social
     case 'auth/popup-closed-by-user':
       return 'The authentication window was closed before completion. Please try again.';
     case 'auth/cancelled-popup-request':
       return 'Only one popup request is allowed at a time. Please wait or refresh.';
+    case 'auth/unauthorized-domain':
+      return 'This domain is not authorized for authentication. Please add it to the authorized domains list.';
     
     // System/Network
     case 'auth/network-request-failed':
       return 'A network error occurred. Please check your internet connection.';
     case 'auth/internal-error':
-      return 'An internal system error occurred. Our engineers are notified. Please try again later.';
+      return 'An internal system error occurred. Please try again later.';
+    case 'auth/invalid-api-key':
+      return 'The provided API key is invalid. Please check your configuration.';
+    case 'auth/app-deleted':
+      return 'This Firebase app instance has been deleted.';
+    case 'auth/configuration-not-found':
+      return 'Firebase configuration not found. Please ensure your project is properly initialized.';
+    case 'auth/argument-error':
+      return 'Authentication failed due to a library configuration error.';
+    case 'auth/invalid-credential':
+      return 'The credentials used are invalid or expired. Please try signing in again.';
+    case 'auth/user-mismatch':
+      return 'The provided credentials do not match the currently signed-in user.';
     
     default:
-      return 'An unexpected authentication error occurred. Please try again.';
+      console.error('Firebase Auth Error:', errorCode, ' (Raw:', rawCode, ')');
+      return `An unexpected authentication error occurred (${errorCode}). Please try again.`;
   }
 };

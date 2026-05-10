@@ -48,6 +48,7 @@ export interface SaleItem {
   price: number;
   quantity: number;
   total: number;
+  unit?: string;
 }
 
 export interface Sale {

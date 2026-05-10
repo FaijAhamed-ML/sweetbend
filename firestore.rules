@@ -17,17 +17,35 @@ service cloud.firestore {
     }
     function isAdmin() { 
       return isSignedIn() && (
-        hasRole('admin') || 
-        request.auth.token.email == 'faijgroups@gmail.com'
+        (request.auth.token.email == 'faijgroups@gmail.com' && request.auth.token.email_verified == true) ||
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
+         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin')
       ); 
     }
-    function isPOS() { return isAdmin() || hasRole('pos'); }
+    function isPOS() { 
+      return isAdmin() || 
+             (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
+              get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'pos'); 
+    }
     function isOwner(userId) { return isSignedIn() && request.auth.uid == userId; }
+
+    function isValidInvoiceSetting(data) {
+      return data.shopName is string && data.shopName.size() <= 100 &&
+             data.shopAddress is string && data.shopAddress.size() <= 200 &&
+             data.shopPhone is string && data.shopPhone.size() <= 30 &&
+             data.footerMessage is string && data.footerMessage.size() <= 200 &&
+             data.website is string && data.website.size() <= 100;
+    }
 
     // --- Settings ---
     match /settings/website {
       allow read: if true;
       allow write: if isAdmin();
+    }
+
+    match /settings/invoice {
+      allow read: if isSignedIn();
+      allow write: if isAdmin() && isValidInvoiceSetting(request.resource.data);
     }
 
     // --- Users ---
@@ -61,10 +79,14 @@ service cloud.firestore {
       allow write: if isPOS();
     }
 
+    // --- Active Sessions ---
+    match /active_sessions/{sessionId} {
+      allow read, write: if isPOS();
+    }
+
     // --- Notifications ---
     match /notifications/{notificationId} {
-      allow read: if isPOS();
-      allow write: if isPOS();
+      allow read, write: if isPOS();
     }
   }
 }

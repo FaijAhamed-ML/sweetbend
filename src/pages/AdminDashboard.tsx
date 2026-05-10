@@ -5,8 +5,8 @@ import { AppSettings, UserProfile, Product, Sale } from '../types';
 import { motion, AnimatePresence } from 'motion/react';
 import { Settings, Users, Box, Save, Plus, Trash2, Edit2, Upload, Activity, X as XIcon, ImageIcon, UserPlus, Phone, BarChart3, Download, AlertTriangle, TrendingUp, DollarSign } from 'lucide-react';
 import { formatCurrency } from '../lib/utils';
-import { format, startOfDay, subDays, isWithinInterval } from 'date-fns';
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell, PieChart, Pie } from 'recharts';
+import { format, startOfDay, subDays, isWithinInterval, eachDayOfInterval, parseISO } from 'date-fns';
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell, PieChart, Pie, AreaChart, Area } from 'recharts';
 
 import { useAuth } from '../hooks/useAuth';
 
@@ -54,6 +54,7 @@ export default function AdminDashboard() {
   };
 
   const [activeTab, setActiveTab] = useState<'settings' | 'users' | 'products' | 'reports'>('settings');
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 
   if (loading) return <div className="h-screen flex items-center justify-center bg-bento-bg font-black text-xs uppercase tracking-widest text-bento-muted">Authenticating...</div>;
   if (!isAdmin && user?.email !== 'faijgroups@gmail.com') return <div className="h-screen flex flex-col items-center justify-center bg-bento-bg text-center p-8">
@@ -92,7 +93,7 @@ export default function AdminDashboard() {
     }, (err) => handleFirestoreError(err, OperationType.GET, 'settings/website'));
 
     onSnapshot(collection(db, 'users'), (snap) => {
-      setUsers(snap.docs.map(d => ({ ...d.data() } as UserProfile)));
+      setUsers(snap.docs.map(d => ({ uid: d.id, ...d.data() } as UserProfile)));
     }, (err) => handleFirestoreError(err, OperationType.LIST, 'users'));
 
     onSnapshot(collection(db, 'products'), (snap) => {
@@ -193,9 +194,9 @@ export default function AdminDashboard() {
   };
 
   return (
-    <div className="flex-1 p-6 grid grid-cols-12 grid-rows-6 gap-4 h-[calc(100vh-64px-40px)] overflow-hidden">
+    <div className="flex-1 p-3 md:p-6 grid grid-cols-1 md:grid-cols-12 md:grid-rows-6 gap-4 h-[calc(100vh-64px)] overflow-hidden">
       {/* Sidebar - Integrated into Bento Grid */}
-      <section className="col-span-12 md:col-span-2 row-span-6 bg-white rounded-3xl border border-bento-border p-4 shadow-sm flex flex-col gap-2">
+      <section className="hidden md:flex md:col-span-2 row-span-6 bg-white rounded-3xl border border-bento-border p-4 shadow-sm flex flex-col gap-2">
         <h2 className="text-[10px] font-bold uppercase tracking-[0.2em] text-bento-muted mb-4 px-4">Management</h2>
         <button 
           onClick={() => setActiveTab('settings')}
@@ -223,8 +224,27 @@ export default function AdminDashboard() {
         </button>
       </section>
 
+      {/* Mobile Top Nav */}
+      <div className="md:hidden flex overflow-x-auto no-scrollbar gap-2 mb-4 shrink-0 px-1">
+         {[
+           { id: 'settings', icon: Settings, label: 'Settings' },
+           { id: 'products', icon: Box, label: 'Inventory' },
+           { id: 'users', icon: Users, label: 'Users' },
+           { id: 'reports', icon: BarChart3, label: 'Insights' },
+         ].map((item) => (
+           <button
+             key={`admin-mobile-tab-${item.id}`}
+             onClick={() => setActiveTab(item.id as any)}
+             className={`shrink-0 flex items-center gap-2 px-4 py-3 rounded-xl text-[9px] font-black uppercase tracking-widest transition-all border ${activeTab === item.id ? 'bg-bento-accent text-white border-transparent shadow-md' : 'bg-white border-bento-border text-bento-muted'}`}
+           >
+             <item.icon className="w-3.5 h-3.5" />
+             {item.label}
+           </button>
+         ))}
+      </div>
+
       {/* Content Area */}
-      <main className="col-span-12 md:col-span-10 row-span-6 bg-white border border-bento-border rounded-3xl p-8 overflow-hidden flex flex-col shadow-sm relative">
+      <main className="col-span-1 md:col-span-10 md:row-span-6 bg-white border border-bento-border rounded-2xl md:rounded-3xl p-6 md:p-8 overflow-hidden flex flex-col shadow-sm relative h-full">
         {error && (
           <div className="absolute top-4 right-4 left-4 z-[70] bg-bento-danger text-white p-4 rounded-2xl flex justify-between items-center shadow-lg animate-in fade-in slide-in-from-top-4">
              <div className="flex items-center gap-3">
@@ -238,8 +258,8 @@ export default function AdminDashboard() {
         )}
         {activeTab === 'settings' && (
           <div className="max-w-3xl flex-1 overflow-y-auto no-scrollbar pr-4">
-            <h2 className="text-2xl font-bold tracking-tight mb-8">System Configuration</h2>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-8 mb-8">
+            <h2 className="text-xl md:text-2xl font-bold tracking-tight mb-8">System Configuration</h2>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 md:gap-8 mb-8">
               <div className="bg-bento-bg p-6 rounded-2xl border border-bento-border">
                 <label className="text-[10px] font-bold uppercase tracking-widest text-bento-muted mb-3 block">Branding Assets</label>
                 <div className="space-y-4">
@@ -274,7 +294,7 @@ export default function AdminDashboard() {
               </div>
             </div>
 
-            <div className="bg-bento-bg p-8 rounded-3xl border border-bento-border mb-8">
+            <div className="bg-bento-bg p-6 md:p-8 rounded-3xl border border-bento-border mb-8">
               <h3 className="text-xs font-bold uppercase tracking-widest text-bento-muted mb-6">Contact & Logistics</h3>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
                 <div>
@@ -304,7 +324,7 @@ export default function AdminDashboard() {
               </div>
             </div>
 
-            <div className="bg-white p-8 rounded-3xl border border-bento-border mb-8">
+            <div className="bg-white p-6 md:p-8 rounded-3xl border border-bento-border mb-8">
               <h3 className="text-xs font-bold uppercase tracking-widest text-bento-muted mb-6">Home Page Customization</h3>
               
               <div className="space-y-8">
@@ -389,7 +409,7 @@ export default function AdminDashboard() {
 
             <div className="flex-1 overflow-y-auto pr-2 custom-scrollbar space-y-3">
               {products.map(p => (
-                <div key={p.id} className="flex items-center justify-between p-3 bg-white rounded-2xl border border-bento-border hover:border-bento-accent transition-all group shadow-sm">
+                <div key={`admin-inventory-${p.id}`} className="flex items-center justify-between p-3 bg-white rounded-2xl border border-bento-border hover:border-bento-accent transition-all group shadow-sm">
                   <div className="flex items-center gap-4">
                     <div className="w-14 h-14 rounded-xl overflow-hidden border border-bento-border">
                        <img src={p.photoUrl} alt={p.name} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
@@ -621,6 +641,27 @@ export default function AdminDashboard() {
             return matchesCustomer && matchesRange;
           });
 
+          const dayRange = eachDayOfInterval({
+            start: startOfDay(parseISO(startDate)),
+            end: startOfDay(parseISO(endDate))
+          });
+
+          const chartData = dayRange.map(day => {
+            const dateStr = format(day, 'yyyy-MM-dd');
+            const revenue = filteredSales.reduce((sum, sale) => {
+              const saleDate = sale.createdAt?.toDate ? sale.createdAt.toDate() : new Date();
+              if (format(saleDate, 'yyyy-MM-dd') === dateStr) {
+                return sum + sale.totalAmount;
+              }
+              return sum;
+            }, 0);
+            return {
+              name: format(day, 'MMM dd'),
+              fullDate: dateStr,
+              revenue
+            };
+          });
+
           return (
             <div className="h-full flex flex-col overflow-y-auto no-scrollbar pr-2">
               <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-8 shrink-0 gap-4">
@@ -636,7 +677,7 @@ export default function AdminDashboard() {
                         >
                           <option value="all">All Customers</option>
                           {users.filter(u => u.role === 'customer').map(u => (
-                            <option key={u.uid} value={u.uid}>{u.name}</option>
+                            <option key={`admin-report-user-${u.uid}`} value={u.uid}>{u.name}</option>
                           ))}
                         </select>
                       </div>
@@ -750,50 +791,67 @@ export default function AdminDashboard() {
               <div className="grid grid-cols-12 gap-6 flex-1 min-h-0">
                  {/* Sales Trend */}
                   <div className="col-span-12 lg:col-span-8 bg-white border border-bento-border rounded-[32px] p-8 flex flex-col shadow-sm">
-                    <h3 className="text-[10px] font-black uppercase tracking-widest text-bento-muted mb-6">Revenue Trend (Active Period)</h3>
+                    <div className="flex justify-between items-center mb-6">
+                      <h3 className="text-[10px] font-black uppercase tracking-widest text-bento-muted">Daily Revenue Trend</h3>
+                      <div className="flex items-center gap-2">
+                        <div className="w-2 h-2 rounded-full bg-bento-accent" />
+                        <span className="text-[9px] font-bold text-bento-muted uppercase tracking-wider">Revenue (LKR)</span>
+                      </div>
+                    </div>
                     <div className="flex-1 min-h-[300px]">
                       <ResponsiveContainer width="100%" height="100%">
-                        <BarChart data={filteredSales.reduce((acc, sale) => {
-                          const date = sale.createdAt?.toDate ? sale.createdAt.toDate() : new Date();
-                          const dateStr = format(date, 'MMM dd');
-                          const existing = acc.find(a => a.name === dateStr);
-                          if (existing) {
-                            existing.total += sale.totalAmount;
-                          } else {
-                            acc.push({ name: dateStr, total: sale.totalAmount });
-                          }
-                          return acc;
-                        }, [] as { name: string, total: number }[]).sort((a, b) => new Date(a.name).getTime() - new Date(b.name).getTime())}>
+                        <AreaChart data={chartData}>
+                          <defs>
+                            <linearGradient id="colorRevenue" x1="0" y1="0" x2="0" y2="1">
+                              <stop offset="5%" stopColor="#815431" stopOpacity={0.1}/>
+                              <stop offset="95%" stopColor="#815431" stopOpacity={0}/>
+                            </linearGradient>
+                          </defs>
                           <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#E5E7EB" />
                           <XAxis 
                             dataKey="name" 
                             axisLine={false} 
                             tickLine={false} 
-                            tick={{ fontSize: 10, fontWeight: 700, fill: '#9CA3AF' }}
+                            tick={{ fontSize: 9, fontWeight: 700, fill: '#9CA3AF' }}
                             dy={10}
                           />
                           <YAxis 
                             axisLine={false} 
                             tickLine={false} 
-                            tick={{ fontSize: 10, fontWeight: 700, fill: '#9CA3AF' }}
-                            tickFormatter={(v) => `$${v}`}
+                            tick={{ fontSize: 9, fontWeight: 700, fill: '#9CA3AF' }}
+                            tickFormatter={(v) => `RS ${v >= 1000 ? (v/1000).toFixed(1)+'k' : v}`}
                           />
                           <Tooltip 
-                            cursor={{ fill: '#F9FAFB' }}
-                            contentStyle={{ borderRadius: '16px', border: '1px solid #E5E7EB', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }}
+                            cursor={{ stroke: '#815431', strokeWidth: 1, strokeDasharray: '4 4' }}
+                            contentStyle={{ 
+                              borderRadius: '16px', 
+                              border: '1px solid #E5E7EB', 
+                              boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)',
+                              padding: '12px'
+                            }}
+                            formatter={(value: number) => [formatCurrency(value), 'Revenue']}
+                            labelStyle={{ fontSize: '10px', fontWeight: '900', textTransform: 'uppercase', marginBottom: '4px', color: '#815431' }}
                           />
-                          <Bar dataKey="total" fill="#815431" radius={[6, 6, 0, 0]} barSize={40} />
-                        </BarChart>
+                          <Area 
+                            type="monotone" 
+                            dataKey="revenue" 
+                            stroke="#815431" 
+                            strokeWidth={3}
+                            fillOpacity={1} 
+                            fill="url(#colorRevenue)" 
+                            animationDuration={1500}
+                          />
+                        </AreaChart>
                       </ResponsiveContainer>
                     </div>
-                 </div>
+                  </div>
 
                  {/* Inventory List */}
                  <div className="col-span-12 lg:col-span-4 bg-white border border-bento-border rounded-[32px] p-8 flex flex-col shadow-sm overflow-hidden">
                     <h3 className="text-[10px] font-black uppercase tracking-widest text-bento-muted mb-6">Inventory Status</h3>
                     <div className="flex-1 overflow-y-auto pr-2 custom-scrollbar space-y-4">
                       {products.sort((a, b) => a.stockLevel - b.stockLevel).map(p => (
-                        <div key={p.id} className="flex items-center justify-between p-4 bg-bento-bg/40 rounded-2xl border border-bento-border/50 group hover:border-bento-accent/30 transition-all">
+                        <div key={`admin-low-stock-${p.id}`} className="flex items-center justify-between p-4 bg-bento-bg/40 rounded-2xl border border-bento-border/50 group hover:border-bento-accent/30 transition-all">
                           <div className="min-w-0 flex-1">
                             <p className="text-xs font-black truncate pr-4">{p.name}</p>
                             <div className="flex items-center gap-2 mt-1">
@@ -860,7 +918,7 @@ export default function AdminDashboard() {
                 </thead>
                 <tbody className="divide-y divide-bento-border text-[13px]">
                   {users.map(u => (
-                    <tr key={u.uid} className="hover:bg-bento-bg/30 transition-colors">
+                    <tr key={`admin-user-row-${u.uid}`} className="hover:bg-bento-bg/30 transition-colors">
                       <td className="px-6 py-4">
                         <div className="font-bold text-bento-accent-dark">{u.name}</div>
                         <div className="text-[10px] text-bento-muted font-medium">{u.email}</div>
