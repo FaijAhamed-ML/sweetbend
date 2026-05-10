@@ -247,7 +247,7 @@ export default function AdminDashboard() {
                     <span className="text-[9px] font-bold text-bento-muted block mb-1">Logo URL</span>
                     <input 
                       className="w-full px-4 py-2 bg-white border border-bento-border rounded-xl text-xs focus:ring-1 focus:ring-bento-accent outline-none"
-                      value={settings.logoUrl}
+                      value={settings.logoUrl || ''}
                       onChange={e => setSettings({...settings, logoUrl: e.target.value})}
                       placeholder="https://..."
                     />
@@ -256,7 +256,7 @@ export default function AdminDashboard() {
                     <span className="text-[9px] font-bold text-bento-muted block mb-1">Favicon URL</span>
                     <input 
                       className="w-full px-4 py-2 bg-white border border-bento-border rounded-xl text-xs focus:ring-1 focus:ring-bento-accent outline-none"
-                      value={settings.tabIconUrl}
+                      value={settings.tabIconUrl || ''}
                       onChange={e => setSettings({...settings, tabIconUrl: e.target.value})}
                       placeholder="https://..."
                     />
@@ -268,7 +268,7 @@ export default function AdminDashboard() {
                 <label className="text-[10px] font-bold uppercase tracking-widest text-bento-muted mb-3 block">Tagline & Motto</label>
                 <textarea 
                   className="w-full px-4 py-3 bg-white border border-bento-border rounded-xl text-sm font-bold focus:ring-1 focus:ring-bento-accent outline-none min-h-[100px]"
-                  value={settings.tagline}
+                  value={settings.tagline || ''}
                   onChange={e => setSettings({...settings, tagline: e.target.value})}
                 />
               </div>
@@ -281,7 +281,7 @@ export default function AdminDashboard() {
                    <span className="text-[9px] font-bold text-bento-muted block mb-1">System Email</span>
                   <input 
                     className="w-full px-4 py-2 bg-white border border-bento-border rounded-xl text-xs focus:ring-1 focus:ring-bento-accent outline-none"
-                    value={settings.contactEmail}
+                    value={settings.contactEmail || ''}
                     onChange={e => setSettings({...settings, contactEmail: e.target.value})}
                   />
                 </div>
@@ -289,7 +289,7 @@ export default function AdminDashboard() {
                    <span className="text-[9px] font-bold text-bento-muted block mb-1">Customer Support Phone</span>
                   <input 
                     className="w-full px-4 py-2 bg-white border border-bento-border rounded-xl text-xs focus:ring-1 focus:ring-bento-accent outline-none"
-                    value={settings.contactPhone}
+                    value={settings.contactPhone || ''}
                     onChange={e => setSettings({...settings, contactPhone: e.target.value})}
                   />
                 </div>
@@ -298,7 +298,7 @@ export default function AdminDashboard() {
                  <span className="text-[9px] font-bold text-bento-muted block mb-1">Store Primary Address</span>
                 <textarea 
                   className="w-full px-4 py-2 bg-white border border-bento-border rounded-xl text-xs focus:ring-1 focus:ring-bento-accent outline-none min-h-[80px]"
-                  value={settings.address}
+                  value={settings.address || ''}
                   onChange={e => setSettings({...settings, address: e.target.value})}
                 />
               </div>
@@ -316,7 +316,7 @@ export default function AdminDashboard() {
                       <span className="text-[9px] font-bold text-bento-muted block mb-1">Hero Title</span>
                       <input 
                         className="w-full px-4 py-2 bg-white border border-bento-border rounded-xl text-xs font-bold focus:ring-1 focus:ring-bento-accent outline-none"
-                        value={settings.heroTitle}
+                        value={settings.heroTitle || ''}
                         onChange={e => setSettings({...settings, heroTitle: e.target.value})}
                       />
                     </div>
@@ -324,7 +324,7 @@ export default function AdminDashboard() {
                       <span className="text-[9px] font-bold text-bento-muted block mb-1">Hero Image URL</span>
                       <input 
                         className="w-full px-4 py-2 bg-white border border-bento-border rounded-xl text-xs focus:ring-1 focus:ring-bento-accent outline-none"
-                        value={settings.heroImage}
+                        value={settings.heroImage || ''}
                         onChange={e => setSettings({...settings, heroImage: e.target.value})}
                       />
                     </div>
@@ -340,7 +340,7 @@ export default function AdminDashboard() {
                         <span className="text-[9px] font-bold text-bento-muted block mb-1">Section Title</span>
                         <input 
                           className="w-full px-4 py-2 bg-white border border-bento-border rounded-xl text-xs font-bold focus:ring-1 focus:ring-bento-accent outline-none"
-                          value={settings.promiseTitle}
+                          value={settings.promiseTitle || ''}
                           onChange={e => setSettings({...settings, promiseTitle: e.target.value})}
                         />
                       </div>
@@ -348,7 +348,7 @@ export default function AdminDashboard() {
                         <span className="text-[9px] font-bold text-bento-muted block mb-1">Button text</span>
                         <input 
                           className="w-full px-4 py-2 bg-white border border-bento-border rounded-xl text-xs font-bold focus:ring-1 focus:ring-bento-accent outline-none"
-                          value={settings.promiseLinkText}
+                          value={settings.promiseLinkText || ''}
                           onChange={e => setSettings({...settings, promiseLinkText: e.target.value})}
                         />
                       </div>
@@ -357,7 +357,7 @@ export default function AdminDashboard() {
                       <span className="text-[9px] font-bold text-bento-muted block mb-1">Promise Message</span>
                       <textarea 
                         className="w-full px-4 py-3 bg-white border border-bento-border rounded-xl text-sm font-bold focus:ring-1 focus:ring-bento-accent outline-none min-h-[80px]"
-                        value={settings.promiseText}
+                        value={settings.promiseText || ''}
                         onChange={e => setSettings({...settings, promiseText: e.target.value})}
                       />
                     </div>
@@ -946,7 +946,7 @@ export default function AdminDashboard() {
                           <label className="text-[9px] font-bold uppercase tracking-[0.2em] text-bento-muted mb-2 block px-1">System Role</label>
                           <select 
                             className="w-full px-6 py-3.5 bg-bento-bg border border-bento-border rounded-2xl text-[10px] font-black uppercase tracking-widest focus:ring-1 focus:ring-bento-accent outline-none appearance-none cursor-pointer"
-                            value={isEditingUser.role}
+                            value={isEditingUser.role || 'customer'}
                             onChange={e => setIsEditingUser({...isEditingUser, role: e.target.value as any})}
                           >
                             <option value="customer">Customer</option>

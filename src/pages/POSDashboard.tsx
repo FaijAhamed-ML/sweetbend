@@ -1073,28 +1073,28 @@ export default function POSDashboard() {
                            <div className="grid grid-cols-2 gap-4">
                               <div>
                                  <label className="text-[9px] font-black uppercase tracking-widest text-bento-muted mb-1 block">Shop Name</label>
-                                 <input value={invoiceSettings.shopName} onChange={e => setInvoiceSettings({...invoiceSettings, shopName: e.target.value})} className="w-full px-3 py-2 bg-white border border-bento-border rounded-xl text-xs font-bold" />
+                                 <input value={invoiceSettings.shopName || ''} onChange={e => setInvoiceSettings({...invoiceSettings, shopName: e.target.value})} className="w-full px-3 py-2 bg-white border border-bento-border rounded-xl text-xs font-bold" />
                               </div>
                               <div>
                                  <label className="text-[9px] font-black uppercase tracking-widest text-bento-muted mb-1 block">Phone</label>
-                                 <input value={invoiceSettings.shopPhone} onChange={e => setInvoiceSettings({...invoiceSettings, shopPhone: e.target.value})} className="w-full px-3 py-2 bg-white border border-bento-border rounded-xl text-xs font-bold" />
+                                 <input value={invoiceSettings.shopPhone || ''} onChange={e => setInvoiceSettings({...invoiceSettings, shopPhone: e.target.value})} className="w-full px-3 py-2 bg-white border border-bento-border rounded-xl text-xs font-bold" />
                               </div>
                            </div>
                            <div>
                               <label className="text-[9px] font-black uppercase tracking-widest text-bento-muted mb-1 block">Logo URL</label>
-                              <input value={invoiceSettings.shopLogo} onChange={e => setInvoiceSettings({...invoiceSettings, shopLogo: e.target.value})} className="w-full px-3 py-2 bg-white border border-bento-border rounded-xl text-xs font-bold" placeholder="https://..." />
+                              <input value={invoiceSettings.shopLogo || ''} onChange={e => setInvoiceSettings({...invoiceSettings, shopLogo: e.target.value})} className="w-full px-3 py-2 bg-white border border-bento-border rounded-xl text-xs font-bold" placeholder="https://..." />
                            </div>
                            <div>
                               <label className="text-[9px] font-black uppercase tracking-widest text-bento-muted mb-1 block">Address</label>
-                              <input value={invoiceSettings.shopAddress} onChange={e => setInvoiceSettings({...invoiceSettings, shopAddress: e.target.value})} className="w-full px-3 py-2 bg-white border border-bento-border rounded-xl text-xs font-bold" />
+                              <input value={invoiceSettings.shopAddress || ''} onChange={e => setInvoiceSettings({...invoiceSettings, shopAddress: e.target.value})} className="w-full px-3 py-2 bg-white border border-bento-border rounded-xl text-xs font-bold" />
                            </div>
                            <div>
                               <label className="text-[9px] font-black uppercase tracking-widest text-bento-muted mb-1 block">Website</label>
-                              <input value={invoiceSettings.website} onChange={e => setInvoiceSettings({...invoiceSettings, website: e.target.value})} className="w-full px-3 py-2 bg-white border border-bento-border rounded-xl text-xs font-bold" />
+                              <input value={invoiceSettings.website || ''} onChange={e => setInvoiceSettings({...invoiceSettings, website: e.target.value})} className="w-full px-3 py-2 bg-white border border-bento-border rounded-xl text-xs font-bold" />
                            </div>
                            <div>
                               <label className="text-[9px] font-black uppercase tracking-widest text-bento-muted mb-1 block">Slogan/Footer</label>
-                              <input value={invoiceSettings.footerMessage} onChange={e => setInvoiceSettings({...invoiceSettings, footerMessage: e.target.value})} className="w-full px-3 py-2 bg-white border border-bento-border rounded-xl text-xs font-bold" />
+                              <input value={invoiceSettings.footerMessage || ''} onChange={e => setInvoiceSettings({...invoiceSettings, footerMessage: e.target.value})} className="w-full px-3 py-2 bg-white border border-bento-border rounded-xl text-xs font-bold" />
                            </div>
                            <button 
                              onClick={saveInvoiceSettings}
